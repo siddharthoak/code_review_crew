@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+
+# Environment — never commit secrets
+.env
+credentials/
+
+# Qdrant local storage
+qdrant_storage/
+
+# Generated reports
+reports/
+
+# Poetry lock (commit this in a real project, optional for POC)
+# poetry.lock
+
+# VSCode
+.vscode/settings.json
