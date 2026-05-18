@@ -1,0 +1,148 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ci.yml  — runs on every pull request
+#
+# Jobs:
+#   lint    → ruff check + ruff format
+#   typecheck → mypy
+#   test    → pytest with coverage
+#
+# All three run in parallel. PR is blocked if any job fails.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [dev]       # also run on direct pushes to dev
+
+jobs:
+
+  # ── Lint ──────────────────────────────────────────────────────────────────
+  lint:
+    name: Ruff lint & format
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "1.8.3"
+          virtualenvs-in-project: true
+
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.12-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dev dependencies
+        run: poetry install --with dev --no-root --no-ansi
+
+      - name: Ruff — lint
+        run: poetry run ruff check .
+
+      - name: Ruff — format check
+        run: poetry run ruff format --check .
+
+  # ── Type check ────────────────────────────────────────────────────────────
+  typecheck:
+    name: Mypy type check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "1.8.3"
+          virtualenvs-in-project: true
+
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.12-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dev dependencies
+        run: poetry install --with dev --no-root --no-ansi
+
+      - name: Mypy
+        run: poetry run mypy agents/ crews/ exporters/ ingestion/ tools/ --ignore-missing-imports
+
+  # ── Tests ─────────────────────────────────────────────────────────────────
+  test:
+    name: Pytest
+    runs-on: ubuntu-latest
+
+    services:
+      # Qdrant for integration tests that need a real vector store
+      qdrant:
+        image: qdrant/qdrant:v1.11.0
+        ports: ["6333:6333"]
+        options: >-
+          --health-cmd "curl -f http://localhost:6333/readyz"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: "1.8.3"
+          virtualenvs-in-project: true
+
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.12-${{ hashFiles('poetry.lock') }}
+
+      - name: Install all dependencies
+        run: poetry install --with dev --no-ansi
+
+      - name: Run tests
+        env:
+          # Use a dummy key for unit tests — integration tests mock the LLM
+          OPENAI_API_KEY: "sk-test-dummy"
+          LLM_PROVIDER: "mock"
+          QDRANT_HOST: "localhost"
+          QDRANT_PORT: "6333"
+        run: |
+          poetry run pytest tests/ \
+            --ignore=tests/e2e \
+            -v \
+            --tb=short \
+            --cov=. \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-fail-under=50
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml

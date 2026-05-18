@@ -1,0 +1,119 @@
+[tool.poetry]
+name = "code-review-crew"
+version = "0.1.0"
+description = "Multi-agent AI code review system with RAG, backed by CrewAI + LlamaIndex + Qdrant"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [
+    { include = "agents" },
+    { include = "crews" },
+    { include = "exporters" },
+    { include = "ingestion" },
+    { include = "tools" },
+]
+
+[tool.poetry.scripts]
+review = "main:app"
+
+# ── Runtime dependencies ──────────────────────────────────────────────────────
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+
+# Orchestration
+crewai          = ">=0.70.0,<1.0.0"
+crewai-tools    = ">=0.12.0,<1.0.0"
+
+# RAG — core (provider-agnostic)
+llama-index-core                  = ">=0.12.7,<0.15.0"
+llama-index-vector-stores-qdrant  = ">=0.3.0,<1.0.0"
+qdrant-client                     = ">=1.11.0,<2.0.0"
+
+# LLM providers — both installed; active one set via LLM_PROVIDER in .env
+llama-index-llms-ollama        = ">=0.1.0,<1.0.0"   # local / free
+llama-index-embeddings-ollama  = ">=0.1.0,<1.0.0"   # local / free
+llama-index-llms-openai        = ">=0.1.0,<1.0.0"   # cloud / prod
+llama-index-embeddings-openai  = ">=0.1.0,<1.0.0"   # cloud / prod
+
+# Database — MySQL
+pymysql      = ">=1.1.0,<2.0.0"   # pure-Python MySQL driver (no C compiler needed)
+sqlalchemy   = ">=2.0.0,<3.0.0"   # ORM for review_runs / findings writes
+cryptography = ">=43.0.0"          # required by pymysql for auth plugins
+
+# Code parsing
+pygments   = ">=2.18.0,<3.0.0"
+gitpython  = ">=3.1.43,<4.0.0"
+
+# Google Docs export
+google-api-python-client  = ">=2.140.0,<3.0.0"
+google-auth-httplib2      = ">=0.2.0,<1.0.0"
+google-auth-oauthlib      = ">=1.2.0,<2.0.0"
+
+# Config & CLI
+pyyaml        = ">=6.0.2,<7.0.0"
+pydantic      = ">=2.9.0,<3.0.0"
+python-dotenv = ">=1.0.1,<2.0.0"
+rich          = ">=13.8.0,<14.0.0"
+typer         = ">=0.12.0,<1.0.0"
+
+# ── Dev dependencies ──────────────────────────────────────────────────────────
+[tool.poetry.group.dev.dependencies]
+pytest            = ">=8.3.0"
+pytest-asyncio    = ">=0.24.0"
+pytest-mock       = ">=3.14.0"
+pytest-cov        = ">=5.0.0"
+ruff              = ">=0.11.8"    # pinned minor — matches Halo project convention
+mypy              = ">=1.11.0"
+types-pyyaml      = ">=6.0.12"
+types-requests    = ">=2.32.0"
+sqlalchemy-stubs  = ">=0.4"       # mypy stubs for SQLAlchemy
+ipython           = ">=8.27.0"    # interactive debugging
+
+# ── Build system ──────────────────────────────────────────────────────────────
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# ── Ruff ─────────────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "S",    # flake8-bandit (security)
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "S101",  # allow assert in tests
+    "B008",  # allow function calls in default args (typer pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agents", "crews", "exporters", "ingestion", "tools"]
+
+# ── Mypy ──────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+disallow_untyped_defs = true
+ignore_missing_imports = true   # crewai / llama-index stubs incomplete
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short --cov=. --cov-report=term-missing"
