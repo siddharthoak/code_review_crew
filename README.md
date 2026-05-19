@@ -1,7 +1,7 @@
 # AI Code Review Crew
 
 A multi-agent code review system built with **CrewAI** + **LlamaIndex (RAG)** + **Qdrant**.
-Produces structured review reports exportable directly to **Google Docs** or Markdown.
+Produces structured review reports written to disk as Markdown, with optional Google Docs export.
 
 ---
 
@@ -18,15 +18,16 @@ code_review_crew/
 │
 ├── tools/                # Reusable tools (shared across crews)
 │   ├── rag.py            → RAGTool (LlamaIndex + Qdrant)
-│   └── code_parser.py    → Parses files, diffs, snippets
+│   ├── code_parser.py    → Parses files, diffs, snippets
+│   └── llm_factory.py    → Swaps Ollama ↔ OpenAI via LLM_PROVIDER env var
 │
 ├── crews/
 │   └── code_review_crew.py        → Wires agents + tasks into CrewAI Crew
 │
 ├── exporters/            # Plugin-style output (add Confluence, Notion, etc.)
 │   ├── base.py           → BaseExporter + ReviewReport dataclass
-│   ├── markdown.py       → Local .md file export
-│   └── google_docs.py    → Google Docs API export
+│   ├── markdown.py       → Local .md file export (default)
+│   └── google_docs.py    → Google Docs API export (opt-in)
 │
 ├── config/
 │   ├── agents.yaml       → Agent personas and goals
@@ -48,83 +49,128 @@ code_review_crew/
 
 ### 1. Prerequisites
 
-- Python 3.11+
-- Docker (for local Qdrant)
-- OpenAI API key
-- Google Cloud project with Docs + Drive APIs enabled (for Google Docs export)
+- Python 3.12
+- Docker + Docker Compose
+- [Ollama](https://ollama.com/download) (free, local — default LLM provider)
+- OpenAI API key (optional — only needed when `LLM_PROVIDER=openai`)
 
-### 2. Install dependencies
+### 2. Install dependencies with Poetry
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# Install Poetry if not already installed
+curl -sSL https://install.python-poetry.org | python3 -
+
+# Install project dependencies
+poetry config virtualenvs.in-project true
+poetry install
+
+# Activate the virtualenv
+poetry shell
 ```
 
 ### 3. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in OPENAI_API_KEY and Qdrant settings
+# Default config uses Ollama — no API key needed for local dev
 ```
 
-### 4. Start Qdrant locally
+Key variables in `.env`:
 
 ```bash
-docker run -p 6333:6333 -p 6334:6334 \
-  -v $(pwd)/qdrant_storage:/qdrant/storage \
-  qdrant/qdrant
+LLM_PROVIDER=ollama              # switch to "openai" for production
+OLLAMA_LLM_MODEL=llama3.2
+OLLAMA_EMBED_MODEL=nomic-embed-text
 ```
 
-### 5. Ingest knowledge base
+### 4. Pull Ollama models
 
 ```bash
+ollama pull llama3.2
+ollama pull nomic-embed-text
+```
+
+### 5. Start the full stack
+
+```bash
+docker compose up -d
+# Starts: Qdrant (6333) · MySQL (3307) · Redis (6380) · app
+```
+
+### 6. Download and ingest the knowledge base
+
+```bash
+chmod +x fetch_kb.sh && ./fetch_kb.sh
+
 python main.py ingest owasp_standards --dir knowledge_base/owasp
 python main.py ingest org_adrs --dir knowledge_base/standards
 ```
 
-Add your own org's ADRs and coding standards to `knowledge_base/standards/`
-before ingesting. The more context you add, the more relevant the architecture
-reviews will be.
+Add your own org ADRs to `knowledge_base/standards/` before ingesting.
 
-### 6. Configure Google Docs export (optional)
+### 7. Configure Google Docs export (optional)
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com)
 2. Create a project → Enable **Google Docs API** and **Google Drive API**
 3. Create OAuth2 credentials → Desktop App → Download JSON
 4. Save to `credentials/google_oauth_credentials.json`
-5. First run will open a browser for OAuth consent; token is cached after that.
+5. First run opens a browser for OAuth consent; token is cached after that.
 
 ---
 
 ## Usage
 
-### Review a Python file → export to Google Docs
+### Review a file (report saved to `./reports/`)
 ```bash
-python main.py review --file src/my_service.py --context "PR #142: Add payment service" --export google_docs
+python main.py review --file src/my_service.py --context "PR #142"
 ```
 
-### Review a git diff → export to Markdown
+### Review a git diff
 ```bash
-git diff HEAD~1 > /tmp/my_changes.diff
-python main.py review --diff /tmp/my_changes.diff --export markdown
+git diff HEAD~1 > /tmp/changes.diff
+python main.py review --diff /tmp/changes.diff
 ```
 
-### Review an inline snippet → export both
+### Review an inline snippet
 ```bash
 python main.py review \
-  --snippet "def get_user(id): return db.query(f'SELECT * FROM users WHERE id={id}')" \
-  --export both
+  --snippet "def get_user(id): return db.query(f'SELECT * FROM users WHERE id={id}')"
 ```
 
-### Review with full options
+### Also push to Google Docs
 ```bash
-python main.py review \
-  --file src/auth.py \
-  --context "Ticket: SEC-204 — Refactor auth token handling" \
-  --pr-url "https://github.com/org/repo/pull/88" \
-  --export google_docs
+python main.py review --file src/auth.py --context "SEC-204" --google-docs
 ```
+
+### Custom output directory
+```bash
+python main.py review --file src/auth.py --output-dir /tmp/reviews
+```
+
+### Via Docker
+```bash
+docker compose exec app python main.py review --file /app/src/service.py
+```
+
+---
+
+## LLM Provider
+
+Switch between Ollama (free, local) and OpenAI (cloud) with one env var:
+
+```bash
+# Local development — no cost
+LLM_PROVIDER=ollama
+OLLAMA_LLM_MODEL=llama3.2           # or deepseek-coder for better code review
+OLLAMA_EMBED_MODEL=nomic-embed-text
+
+# Staging / production
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+```
+
+> ⚠ If you change `OLLAMA_EMBED_MODEL` after ingestion, re-run ingest with `--recreate`
+> since Qdrant vector dimensions must match the embedding model.
 
 ---
 
@@ -138,20 +184,19 @@ Two Qdrant collections are used:
 | `org_adrs` | ArchitectureReviewerAgent | Your org's ADRs, coding standards, design patterns |
 
 Before reviewing, each agent calls `RAGTool` to retrieve the most relevant
-guidelines for what it observes in the code. This grounds reviews in your
-actual org standards rather than generic advice.
+guidelines for what it observes in the code.
 
 ### Adding a new knowledge base
 
 ```python
-# In tools/rag.py — already there, just uncomment:
+# tools/rag.py — add:
 test_patterns_rag_tool = RAGTool(collection_name="test_patterns")
 
-# In agents/test_coverage_reviewer.py:
+# agents/test_coverage_reviewer.py — attach it:
 tools=[test_patterns_rag_tool]
 
-# Ingest your test pattern docs:
-# python main.py ingest test_patterns --dir knowledge_base/test_patterns
+# Ingest:
+python main.py ingest test_patterns --dir knowledge_base/test_patterns
 ```
 
 ---
@@ -168,7 +213,7 @@ def build_performance_reviewer(config: dict) -> Agent:
         role=config["role"],
         goal=config["goal"],
         backstory=config["backstory"],
-        tools=[],   # attach perf_patterns_rag_tool if desired
+        tools=[],
         verbose=True,
     )
 ```
@@ -194,7 +239,6 @@ from agents import build_performance_reviewer
 
 perf_agent = build_performance_reviewer(agents_cfg["performance_reviewer"])
 perf_task = Task(description=..., agent=perf_agent)
-# Add to tasks list and summary_task context
 ```
 
 That's it. No other files change.
@@ -203,19 +247,13 @@ That's it. No other files change.
 
 ## Phase 2: Bug Triage Crew
 
-The following will be reused without modification:
-- `tools/rag.py` (add `codebase_rag_tool`, `bug_history_rag_tool`)
-- `tools/code_parser.py`
-- `exporters/` (all exporters)
-- `ingestion/ingest.py`
+Reused without modification:
+- `tools/rag.py`, `tools/code_parser.py`, `exporters/`, `ingestion/ingest.py`
 
 New additions only:
 - `crews/bug_triage_crew.py` (LangGraph-based for retry loops)
-- `agents/bug_parser.py`
-- `agents/root_cause.py`
-- `agents/impact_analysis.py`
-- `knowledge_base/bug_history/`
-- `knowledge_base/codebase/`  (or index from src/ directly)
+- `agents/bug_parser.py`, `agents/root_cause.py`, `agents/impact_analysis.py`
+- `knowledge_base/bug_history/`, `knowledge_base/codebase/`
 
 ---
 
@@ -228,8 +266,7 @@ from .base import BaseExporter, ReviewReport
 class ConfluenceExporter(BaseExporter):
     def export(self, report: ReviewReport) -> str:
         # Push to Confluence REST API
-        ...
         return "https://your-org.atlassian.net/wiki/..."
 ```
 
-Register in `exporters/__init__.py` and add to the CLI in `main.py`.
+Register in `exporters/__init__.py` and add `--confluence` flag to `main.py`.
